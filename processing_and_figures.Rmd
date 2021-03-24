@@ -1,0 +1,1127 @@
+---
+title: "Simultaneous calibration of hydrologic model structure and parameters using a blended model - Figures"
+author: "R. Chlumsky, J. Mai, J. R. Craig, B. A. Tolson"
+date: "24/03/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This Rmd file contains the code chunks (scripts) required to generate the figures in the manuscript and supplementary materials for 'Simultaneous calibration of hydrologic model structure and parameters using a blended model'.
+
+# Setup Chunks
+
+## Setting Options and Loading Libraries
+
+```{r setup options, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE)
+library(knitr)
+library(kableExtra)
+options(warn = -1) 
+options(stringsAsFactors = F)
+```
+
+```{r load libraries}
+library(RavenR)
+library(xts)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(purrr)
+library(scales)
+library(gridExtra)
+library(sf)
+library(maps)
+library(ggrepel)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggspatial)
+```
+
+## Additional Function Declarations
+
+```{r additional support functions for producing figures}
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+process_names <- list(
+  'snowbalance'="snow balance",
+  'quickflow'="quickflow",
+  'evapotranspiration'="evapotranspiration",
+  'baseflow'="baseflow",
+  'infiltration'='infiltration',
+  'ET'='ET'
+  )
+  
+process_labeller <- function(variable,value){
+return(process_names[value])
+}
+
+# Facet <- ggproto(
+#   ...               
+#   init_scales = function(layout, x_scale = NULL, y_scale = NULL, params) {
+#     scales <- list()
+#     if (!is.null(x_scale)) {
+#       scales$x <- plyr::rlply(max(layout$SCALE_X), x_scale$clone())
+#     }
+#     if (!is.null(y_scale)) {
+#       scales$y <- plyr::rlply(max(layout$SCALE_Y), y_scale$clone())
+#     }
+#     scales
+#   },
+#   ...
+# )
+
+scale_override <- function(which, scale) {
+  if(!is.numeric(which) || (length(which) != 1) || (which %% 1 != 0)) {
+    stop("which must be an integer of length 1")
+  }
+  
+  if(is.null(scale$aesthetics) || !any(c("x", "y") %in% scale$aesthetics)) {
+    stop("scale must be an x or y position scale")
+  }
+  
+  structure(list(which = which, scale = scale), class = "scale_override")
+}
+
+CustomFacetWrap <- ggproto(
+  "CustomFacetWrap", FacetWrap,
+  init_scales = function(self, layout, x_scale = NULL, y_scale = NULL, params) {
+    # make the initial x, y scales list
+    scales <- ggproto_parent(FacetWrap, self)$init_scales(layout, x_scale, y_scale, params)
+    
+    if(is.null(params$scale_overrides)) return(scales)
+    
+    max_scale_x <- length(scales$x)
+    max_scale_y <- length(scales$y)
+    
+    # ... do some modification of the scales$x and scales$y here based on params$scale_overrides
+    for(scale_override in params$scale_overrides) {
+      which <- scale_override$which
+      scale <- scale_override$scale
+      
+      if("x" %in% scale$aesthetics) {
+        if(!is.null(scales$x)) {
+          if(which < 0 || which > max_scale_x) stop("Invalid index of x scale: ", which)
+          scales$x[[which]] <- scale$clone()
+        }
+      } else if("y" %in% scale$aesthetics) {
+        if(!is.null(scales$y)) {
+          if(which < 0 || which > max_scale_y) stop("Invalid index of y scale: ", which)
+          scales$y[[which]] <- scale$clone()
+        }
+      } else {
+        stop("Invalid scale")
+      }
+    }
+    
+    # return scales
+    scales
+  }
+)
+
+facet_wrap_custom <- function(..., scale_overrides = NULL) {
+  # take advantage of the sanitizing that happens in facet_wrap
+  facet_super <- facet_wrap(...)
+  
+  # sanitize scale overrides
+  if(inherits(scale_overrides, "scale_override")) {
+    scale_overrides <- list(scale_overrides)
+  } else if(!is.list(scale_overrides) || 
+            !all(vapply(scale_overrides, inherits, "scale_override", FUN.VALUE = logical(1)))) {
+    stop("scale_overrides must be a scale_override object or a list of scale_override objects")
+  }
+  
+  facet_super$params$scale_overrides <- scale_overrides
+  
+  ggproto(NULL, CustomFacetWrap,
+          shrink = facet_super$shrink,
+          params = facet_super$params
+  )
+}
+```
+
+## Initial Results Data Processing
+
+```{r global arguments and supplementary data}
+num_arrays <- 20
+num_models <- 112
+num_catchments <- 12
+
+basins_chars <- read.table("supplementary_data/basin_physical_characteristics.txt", sep=";", header = T)
+```
+
+```{r generate results master table for 10k, eval=FALSE}
+
+# note: the results.zip file needs to be unzipped first!
+
+master_table <- NULL
+results_folder_10k = "setup_with_results/results/"
+
+for (k in seq(1,12)) {
+  
+  ## build mm for MOPEX catchment k
+  mm <- data.frame(matrix(NA,nrow=num_models, ncol=2+num_arrays*2))
+  colnames(mm) <- c("modelid","catchid",sprintf("calib_%02d",seq(1,num_arrays)),
+  sprintf("valid_%02d",seq(1,num_arrays)))
+  mm$modelid <- seq(1,num_models)
+  mm$catchid <- rep(k,num_models)
+  
+  ## grab data from files, arrange in mm
+  for (j in 1:num_arrays) {
+    ff <- sprintf("%s/results_metrics_calibration_%02d_%03d_20210317.csv",results_folder_10k,k,j)
+    if (file.exists(ff)) {
+      dd <- read.csv(ff)
+      mm[1:112,j+2] <- dd$calibNSE
+      mm[1:112,j+2+num_arrays] <- dd$validNSE
+      
+      if (any(is.na(dd))) {print(sprintf("NA values found in catchment %i array %i",k,j))}
+      
+    } else {
+      mm[1:112,(j+2):(j+2+num_arrays)] <- NA
+    }
+  }
+  
+  if (any(is.na(mm))) {print(sprintf("NA values found in catchment %i",k))}
+
+  ## calculate mm statistics and rank
+  mm$median_cc <- apply(mm[,grepl("calib",colnames(mm))],1,median,na.rm=T)
+  mm$max_cc <- apply(mm[,grepl("calib",colnames(mm))],1,max,na.rm=T)
+  mm$min_cc <- apply(mm[,grepl("calib",colnames(mm))],1,min,na.rm=T)
+  mm$sd_cc <- apply(mm[,grepl("calib",colnames(mm))],1,sd,na.rm=T)
+  mm$median_vv <- apply(mm[,grepl("valid",colnames(mm))],1,median,na.rm=T)
+  mm$max_vv <- apply(mm[,grepl("valid",colnames(mm))],1,max,na.rm=T)
+  mm$min_vv <- apply(mm[,grepl("valid",colnames(mm))],1,min,na.rm=T)
+  mm$sd_vv <- apply(mm[,grepl("valid",colnames(mm))],1,sd,na.rm=T)
+  mm$corr_mx_vv <- NA
+  
+  for (i in 1:num_models) {
+    mm$corr_mx_vv[i] <- mm[i,(which(mm[i,1:22] == mm$max_cc[i]))+num_arrays]
+  }
+  
+  if (is.null(master_table)) {
+    master_table <- mm
+  } else {
+    master_table <- rbind(master_table, mm)
+  }
+}
+
+# direct this file to the setup_with_results/results_summary folder
+write.csv(master_table,
+          "model_structure_results_summarized_10k_20210317.csv",
+          quote=F,row.names=F)
+```
+
+
+```{r generate parameters master table for 10k, eval=FALSE}
+
+# note: the parameters.zip file needs to be unzipped first!
+
+master_table <- NULL
+params_folder_10k = "setup_with_results/parameters/"
+
+num_models <- 110
+
+for (k in seq(1,12)) {
+  for (j in 1:num_arrays) {
+    ff <- sprintf("%s/params_results_10k_20200810_calibration_%02d_%03d_20210324.csv",params_folder_10k,k,j)
+    
+    if (file.exists(ff)) {
+      dd <- read.csv(ff)
+      
+      mm <- cbind(
+        rep(k,num_models),
+        rep(j,num_models),
+        dd
+      )
+      colnames(mm)[1:3] <- c("catchid","trial","modelid")
+      
+    if (is.null(master_table)) {
+      master_table <- mm
+    } else {
+      master_table <- rbind(master_table, mm)
+    }
+      
+    } else {
+      print(sprintf("File not valid for catchment %i trial %i",k,j))
+    }
+  }
+}
+
+# direct this file to the setup_with_results/results_summary folder
+write.csv(master_table,
+          "model_structure_params_summarized_p43_20200911.csv",
+          quote=F,row.names=F)
+```
+
+```{r read in results files}
+master_table_10k <- read.csv("setup_with_results/results_summary/model_structure_results_summarized_10k_20210317.csv")
+master_table_10k$modelname <- "other"
+master_table_10k$modelname[master_table_10k$modelid == 1] <- "HMETS"
+master_table_10k$modelname[master_table_10k$modelid == 109] <- "blended"
+master_table_10k$modelname[master_table_10k$modelid == 110] <- "blended+"
+master_table_10k$modelname[master_table_10k$modelid == 111] <- "SMA"
+master_table_10k$modelname[master_table_10k$modelid == 112] <- "WMA"
+master_table_10k$modelname <- as.factor(master_table_10k$modelname)
+
+master_param_table_10k <- read.csv("setup_with_results/results_summary/model_structure_params_summarized_10k_20200911.csv")
+master_param_table_10k$modelname <- "other"
+master_param_table_10k$modelname[master_param_table_10k$modelid == 1] <- "HMETS"
+master_param_table_10k$modelname[master_param_table_10k$modelid == 109] <- "blended"
+master_param_table_10k$modelname[master_param_table_10k$modelid == 110] <- "blended+"
+master_param_table_10k$modelname[master_param_table_10k$modelid == 111] <- "SMA"
+master_param_table_10k$modelname[master_param_table_10k$modelid == 112] <- "WMA"
+```
+
+```{r read in structures for 10k}
+source("calc_pieshare.R")
+
+ind_blended <- which(master_param_table_10k$modelid == 109 | master_param_table_10k$modelid == 110)
+
+all_weights <- data.frame(matrix(NA,nrow=nrow(master_param_table_10k), ncol=13))
+colnames(all_weights) <- c(paste0("infiltration",seq(1,3)),
+                           paste0("quickflow",seq(1,3)),
+                           paste0("evaporation",seq(1,2)),
+                           paste0("baseflow",seq(1,2)),
+                           paste0("snowbalance",seq(1,3))
+                          )
+
+for (i in ind_blended) {
+  all_weights[i,1:3] <-   calc_pieshare(as.numeric(master_param_table_10k[i,38:39]))
+  all_weights[i,4:6] <-   calc_pieshare(as.numeric(master_param_table_10k[i,40:41]))
+  all_weights[i,7:8] <-   calc_pieshare(as.numeric(master_param_table_10k[i,42]))
+  all_weights[i,9:10] <- calc_pieshare(as.numeric(master_param_table_10k[i,43]))
+  all_weights[i,11:13] <- calc_pieshare(as.numeric(master_param_table_10k[i,44:45])) 
+}
+
+cbind(master_param_table_10k,all_weights) -> master_param_table_10k
+```
+
+## MOPEX12 Catchments
+
+### MOPEX12 Map
+
+```{r MOPEX map, out.width = "18cm", echo = FALSE}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+states <- st_as_sf(map("state", plot = FALSE, fill = TRUE))
+
+basins_chars %>% 
+  mutate(catchid = row_number()) %>% 
+  mutate(state = RavenR::rvn_substrRight(basin_name,2)) ->
+  basins_chars_2
+
+basins_chars_2$state_full <- c("West Virginia","Maryland","Virginia","West Virginia","West Virginia","Indiana","North Carolina",
+                              "Idaho","Missouri","Louisiana","Texas","Texas")
+basins_chars_2$basin_id <- sprintf("%08d", basins_chars_2$basin_id)
+
+world %>% 
+  filter(continent == "North America") %>% 
+ggplot(data = .) +
+    geom_sf() +
+    geom_sf(data = states, fill = NA, size=0.1) + 
+    xlab("Longitude") + ylab("Latitude") +
+    geom_point(data=basins_chars_2, aes(x=lon, y=lat), size=2, shape=23, fill='red')+
+    geom_label_repel(data=basins_chars_2, aes(x=lon, y=lat), 
+                    label = sprintf("C #%i, %s",basins_chars_2$catchid, basins_chars_2$state),
+                    box.padding=2, fill="white",
+                    color="black") +
+    coord_sf(xlim = c(-125, -65), ylim = c(25, 50), expand = FALSE)+ 
+    annotation_north_arrow(location = "bl", which_north = "true", 
+        style = north_arrow_fancy_orienteering) -> p1
+
+  p1 %>% 
+  ggsave(filename="figures/mopex_catchments_map.pdf", plot=.,
+         units="in", height=7,width=7)
+```
+
+### MOPEX12 characteristics
+
+Catchment characteristics computed from supplied data. This output file ('mopex_calculated_characteristics.scsv') was then reformatted to generate the 'MOPEX data table.csv' file.
+
+```{r catchment characteristics, echo=FALSE, include=TRUE}
+fldr <- "setup_with_results/data_obs"
+mm <- data.frame(matrix(NA,nrow=10,ncol=12))
+colnames(mm) <- seq(1,12)
+rownames(mm) <- c("state","avg_precip_mm.yr","avg_pet_mm.yr",
+                  "avg_temp_max_dC","avg_temp_min_dC","avg_temp_avg_dC","avg_flow_Mm3.yr","avg_flow_mm.yr",
+                  "aridity_index","runoff_ratio")
+state <- RavenR::rvn_substrRight(basins_chars$basin_name, 2)
+for (i in 1:12) {
+  ffmet <- sprintf("%s/%08d_meteo_daily.rvt",fldr,basins_chars$basin_id[i])
+  ffq <- sprintf("%s/%08d_Qobs_daily.rvt",fldr,basins_chars$basin_id[i])
+  
+  dd <- seq.Date(from=as.Date("1948-01-01"),by=1,length.out=20454)
+  met <- xts(read.table(ffmet,header = F, nrows = 20454, skip = 4,sep=",",colClasses = rep("numeric",4) ),
+             order.by=dd)
+  qq <- xts(read.table(ffq,header = F, nrows = 20454, skip = 2,sep=",",colClasses = rep("numeric",1) ),
+            order.by=dd)
+  qq[qq < 0] <- NA
+  
+  mm[2:5,i] <- apply.yearly(met,mean) %>% apply(., 2, mean)*c(365.25,365.25,1,1)
+  mm[7,i] <- apply.yearly(qq,mean,na.rm=T) %>% apply(., 2, mean, na.rm=T)*365.25*86400/1e6
+  mm[8,i] <- mm[7,i]*1e3/basins_chars$area_km2[i]
+}
+mm[6,] <- (mm[4,]+mm[5,])/2
+mm[1,] <- state
+mm[9,] <- as.numeric(mm[2,])/as.numeric(mm[3,])
+mm[10,] <- as.numeric(mm[8,])/as.numeric(mm[2,])
+mm -> catchchars
+
+data.frame(rbind(
+    "catchid"=seq(1,12),
+    "state"=catchchars[1,],
+    "name"=basins_chars_2$basin_name,
+    "annual_precip_mm"=round(as.numeric(catchchars[2,]),2),
+    "annual_pet_mm"=round(as.numeric(catchchars[3,]),2),
+    "avg_temp_avg_dC"=round(as.numeric(catchchars[6,]),2),
+    "avg_flow_Mm3.yr"=round(as.numeric(catchchars[7,]),2),
+      "aridity"=round(as.numeric(catchchars[9,]),2),
+      "runoff"=round(as.numeric(catchchars[10,]),2))
+      ) %>% 
+  write.table( .,  "supplementary_data/mopex_calculated_characteristics.scsv", row.names=T, quote=F, sep=";")
+```
+
+
+```{r MOPEX table}
+dd <- read.csv("supplementary_data/MOPEX data table.csv")
+
+dd$basin_id <- sprintf("%08d", dd$basin_id)
+dd$lat <- round(dd$lat, 2)
+dd$lon <- round(dd$lon, 2)
+dd$area_km2 <- round(dd$area_km2, 0)
+dd$elevation_m <- round(dd$elevation_m, 1)
+dd$slope_deg <- round(dd$slope_deg, 1)
+dd$forest_frac_percent <- round(dd$forest_frac_percent, 1)
+dd$annual_precip_mm <- round(dd$annual_precip_mm,0)
+dd$annual_pet_mm <- round(dd$annual_pet_mm,0)
+dd$avg_temp_avg_dC <- round(dd$avg_temp_avg_dC,1)
+dd$avg_flow_Mm3.yr <- round(dd$avg_flow_Mm3.yr,0)
+
+dd %>% 
+  select(catchid,basin_id,name_clean,lat,lon,area_km2,elevation_m,slope_deg,forest_frac_percent,annual_precip_mm,annual_pet_mm,avg_temp_avg_dC,avg_flow_Mm3.yr,aridity,runoff) %>% 
+knitr::kable(.,
+             caption="MOPEX12 catchment characteristics.",
+             format="latex") %>%
+  kable_styling(latex_options = "hold_position", position = "center")
+```
+
+## Results and Discussion
+
+### Model Calibration and Validation Performance by Catchment
+
+```{r main results figures max NSE, fig.width=7.5, fig.height=7.5, units="in"}
+
+plotfunc <- function(k, mt, pointsize=1.0){
+  mm <- mt %>% 
+    filter(catchid == k) %>% 
+    filter(modelid != 110)
+  
+  num_models <- 111
+  
+  ## rank
+  mm <- mm[order(-mm$max_cc),]
+  mm$rank <- seq(1,num_models)
+  
+  mm %>%
+    select(., modelid, modelname, max_cc, corr_mx_vv, rank) %>%
+    pivot_longer(., cols=c(max_cc, corr_mx_vv),
+                 values_to="NSE_values", names_to="timeframe") -> 
+    mm_longer
+  
+  alpha_forplot <- 0.01 
+  
+  ggplot(mm_longer, aes(rank,NSE_values, group=timeframe, shape=timeframe))+
+    geom_rect(aes(xmin=mm_longer$rank[(mm_longer$modelname=="SMA" & mm_longer$timeframe=="max_cc")]-0.25,
+                  xmax=mm_longer$rank[(mm_longer$modelname=="SMA" & mm_longer$timeframe=="max_cc")]+0.25,
+                  ymin=-Inf, ymax=Inf),
+              fill=c(ggplotColours(n=4))[1], color=NA, alpha=alpha_forplot, show.legend = F)+
+
+    geom_rect(aes(xmin=mm_longer$rank[(mm_longer$modelname=="WMA" & mm_longer$timeframe=="max_cc")]-0.25,
+                  xmax=mm_longer$rank[(mm_longer$modelname=="WMA" & mm_longer$timeframe=="max_cc")]+0.25,
+                  ymin=-Inf, ymax=Inf),
+              fill=c(ggplotColours(n=4))[2], color=NA, alpha=alpha_forplot, show.legend = F)+
+
+    geom_rect(aes(xmin=mm_longer$rank[(mm_longer$modelname=="blended" & mm_longer$timeframe=="max_cc")]-0.25,
+                  xmax=mm_longer$rank[(mm_longer$modelname=="blended" & mm_longer$timeframe=="max_cc")]+0.25,
+                  ymin=-Inf, ymax=Inf),
+              fill=c(ggplotColours(n=4))[3], color=NA, alpha=alpha_forplot, show.legend = F)+
+
+    geom_rect(aes(xmin=mm_longer$rank[(mm_longer$modelname=="HMETS" & mm_longer$timeframe=="max_cc")]-0.25,
+                  xmax=mm_longer$rank[(mm_longer$modelname=="HMETS" & mm_longer$timeframe=="max_cc")]+0.25,
+                  ymin=-Inf, ymax=Inf),
+              fill=c(ggplotColours(n=4))[4], color=NA, alpha=alpha_forplot, show.legend = F)+
+
+    geom_line(size=0.2, color='grey55', alpha=0.5)+
+    geom_point(size=pointsize,  aes(color=modelname))+ 
+      
+    ylab("NSE Scores")+
+    xlab("Maximum Calibration NSE Rank")+
+    ylim(c(0.1,1))+
+    annotate("label",x=55.5,y=0.95,label=sprintf("Catchment %i",k),
+             fontface="bold",size=4, fill='white', label.size=NA)+  
+    theme(axis.title = element_text(size=8))+
+    theme(axis.text = element_text(size=8))+
+    theme(panel.background = element_blank())+
+    theme(panel.border = element_rect(colour="black",size=1, fill=NA))+
+    
+    scale_color_manual(name="Model Structure",
+                     values=c(ggplotColours(n=4),"grey55"),
+                     breaks=c("SMA","WMA","blended","HMETS","other"))+
+    scale_shape_manual(name="Period",
+                     values=c(19,6),
+                     labels=c("Calibration","Validation"),
+                     breaks=c("max_cc","corr_mx_vv")) +
+  
+   guides(colour = guide_legend(override.aes = list(size=3)))+
+   guides(shape = guide_legend(override.aes = list(size=3))) -> p
+    
+    if (k %in% seq(1,10)) {
+      p <- p +
+      theme(
+      axis.title.x=element_blank(),
+      axis.text.x=element_blank(),
+      )
+    }
+    return(p)
+}
+
+lapply(seq(1,12), plotfunc, master_table_10k, 0.65) -> temp
+for (i in c(seq(1,6,2), seq(2,7,2), c(9,11,8,10,12))) {   temp[[i]] <- temp[[i]] + ylab("") }
+for (i in 1:10) {   temp[[i]] <- temp[[i]] + theme(axis.title.x = element_blank()) }
+temp[[11]] <- temp[[11]] + theme(axis.title.x = element_text(size=10, hjust=0.5, vjust=0, face="bold"))
+temp[[12]] <- temp[[12]] + theme(axis.title.x = element_text(size=10, hjust=0.5, vjust=0, face="bold"))
+temp[[7]] <- temp[[7]] + theme(axis.title.y = element_text(size=10, hjust=0.5, vjust=0, face="bold"))
+
+temp %>% 
+ggarrange(plotlist=., ncol=2, nrow=6, common.legend=T, legend="bottom",
+          align='v', heights=c(rep(1,5), 1.15)) %>% 
+ggsave("figures/calib_ranked_max_nse_10k.pdf", plot=.,
+         units="in", height=10,width=8.5)
+```
+
+### Model Calibration and Validation Performance by Average Rank
+
+```{r plot by average calibration rank, fig.width=7.5, fig.height=7.5, units="in"}
+
+num_models <- 112
+
+master_ranks_10k <- data.frame(matrix(NA,nrow=0, ncol=4))
+colnames(master_ranks_10k) <- c("modelid","catchid","iter","rank")
+for (i in 1:num_arrays) {
+  for (j in 1:num_catchments)
+    
+    temp <- master_table_10k[(master_table_10k$catchid == j), c("modelid",sprintf("calib_%02d",i), "catchid")]
+    temp$iter <- i
+    temp <- temp[order(-temp[,2]),]
+    temp$rank <- seq(1,num_models)
+  
+    master_ranks_10k <- rbind(master_ranks_10k, temp[,-2])
+}
+
+# 10k plot
+master_ranks_10k %>% 
+  filter(modelid != 110) %>% 
+  group_by(modelid) %>% 
+  summarize(mrank = mean(rank)) %>% 
+  arrange(mrank) %>% 
+  mutate(tempid = seq(1,111)) %>% 
+  mutate(modelname=NA) -> temp
+
+temp$modelname <- "other"
+temp$modelname[temp$modelid == 1] = "HMETS"
+temp$modelname[temp$modelid == 109] = "blended"
+temp$modelname[temp$modelid == 111] = "SMA"
+temp$modelname[temp$modelid == 112] = "WMA"
+
+ggplot(temp, aes(x=tempid, y=mrank, color=modelname, shape=modelname))+
+  geom_point(size=3, alpha=1)+
+  ylab("Average Calibration Rank")+
+  xlab("Rank by Average Calibration Rank")+
+  ylim(c(0,100))+
+  xlim(c(0,100))+
+  labs(title=" ")+
+  theme_classic()+
+  theme(plot.title = element_text(size=12, hjust=0.5, vjust=0, face="bold")) +
+  annotate("text",x=10,y=100,label="(A) Calibration",fontface="bold",size=6, hjust=0)+
+  scale_color_manual(name="Model Structure",
+                       values=c(ggplotColours(n=4),"grey55"),
+                      breaks=c("SMA","WMA","blended","HMETS","other"))+
+  scale_shape_manual(name="Model Structure",
+                       values=c(15,18,16,17,1),
+                       breaks=c("SMA","WMA","blended","HMETS","other"))+
+  theme(legend.position="none")-> p2
+
+
+master_ranks_10k <- data.frame(matrix(NA,nrow=0, ncol=4))
+colnames(master_ranks_10k) <- c("modelid","catchid","iter","rank")
+for (i in 1:num_arrays) {
+  for (j in 1:num_catchments)
+    
+    temp <- master_table_10k[(master_table_10k$catchid == j), c("modelid",sprintf("valid_%02d",i), "catchid")]
+    temp$iter <- i
+    temp <- temp[order(-temp[,2]),]
+    temp$rank <- seq(1,num_models)
+  
+    master_ranks_10k <- rbind(master_ranks_10k, temp[,-2])
+}
+
+# 10k plot
+master_ranks_10k %>% 
+  filter(modelid != 110) %>% 
+  group_by(modelid) %>% 
+  summarize(mrank = mean(rank)) %>% 
+  arrange(mrank) %>% 
+  mutate(tempid = seq(1,111)) %>% 
+  mutate(modelname=NA) -> temp
+
+temp$modelname <- "other"
+temp$modelname[temp$modelid == 1] = "HMETS"
+temp$modelname[temp$modelid == 109] = "blended"
+temp$modelname[temp$modelid == 111] = "SMA"
+temp$modelname[temp$modelid == 112] = "WMA"
+
+
+ggplot(temp, aes(x=tempid, y=mrank, color=modelname, shape=modelname))+
+  geom_point(size=3, alpha=1)+
+  ylab("Average Validation Rank")+
+  xlab("Rank by Average Validation Rank")+
+  ylim(c(0,100))+
+  xlim(c(0,100))+
+  
+  theme_classic()+
+  annotate("text",x=10,y=100,label="(B) Validation",fontface="bold",size=6, hjust=0)+
+  scale_color_manual(name="Model Structure",
+                       values=c(ggplotColours(n=4),"grey55"),
+                       breaks=c("SMA","WMA","blended","HMETS","other"))+
+  scale_shape_manual(name="Model Structure",
+                       values=c(15,18,16,17,1),
+                       breaks=c("SMA","WMA","blended","HMETS","other"))+
+  theme(legend.position="top") -> p4
+
+
+p2 <- p2 +theme(axis.text = element_text(size=13))+
+  theme(legend.text = element_text(size=13))
+p4 <- p4 +theme(axis.text = element_text(size=13))+
+  theme(legend.text = element_text(size=13))
+
+ggarrange(p2, p4, ncol=2, nrow=1,common.legend=T, legend="bottom", align = 'h') %>% 
+ggsave("figures/ranked_calibandvalid_plots_10k.pdf", plot=.,
+         units="in", height=6,width=10)
+```
+
+## Model Performance by Process (Fixed Models)
+
+Density plot by process for catchments 1, 8, and 11 only.
+
+```{r scatterplot by process with PDF curve, fig.width=7.5, fig.height=7.8, units="in"}
+
+num_models <- 112
+
+plotfunc <- function(k, mt){
+  mm <- mt %>% 
+  filter(catchid == k)
+  
+  master_list <- read.csv("supplementary_data/master_modelstructure_param_list.csv")
+  master_list[num_models,] <- NA
+  mm <- cbind(mm, master_list)
+  
+  mm <- plyr::rename(mm, c("evaporation"="evapotranspiration"))
+  
+  mm %>% 
+    select(!starts_with(c("max","min","sd","valid","corr") )) %>%
+    filter(modelid <= 109) %>% 
+    pivot_longer(., starts_with("calib"),
+                 names_to="calib_run",
+                 values_to="calib_NSE") %>% 
+    pivot_longer(., c(snowbalance,infiltration,quickflow, evapotranspiration, baseflow),
+                 names_to="process",
+                 values_to="process_num") ->
+    mm_longer
+  
+    ggplot(mm_longer)+
+    ylim(c(0.4,0.8))+
+    ylab("Calibration NSE") + 
+    xlab("Density")+
+    geom_hline(data = subset(mm_longer, modelid == 109), aes(yintercept = calib_NSE, linetype = "blended\ncalibration NSE"), color='lightgrey', lwd=0.25) +
+    scale_linetype_manual(name = "", values=c(1))+
+    geom_density(data=subset(mm_longer, modelid != 109), 
+                 aes(y=calib_NSE, fill=as.factor(process_num), color=as.factor(process_num)),
+                 alpha=0.2)+
+    theme(legend.position = "right") +    theme(strip.text.x = element_text(size=9,face="bold"))+
+    theme(axis.title = element_text(face="bold", size=12))+
+    scale_fill_manual(name="Process No.",
+            labels=c("1","2","3","blended"),
+            values=ggplotColours(n=4),
+            na.value='grey4')+
+    scale_color_manual(name="Process No.",
+            labels=c("1","2","3","blended"),
+            values=ggplotColours(n=4),
+            na.value='grey4')+
+    facet_wrap(~process, nrow=1, scales="free_x", labeller=process_labeller) +  
+    theme(panel.border = element_rect(colour="black",size=0.1, fill=NA))+
+    theme(panel.background = element_rect(fill='white'))+
+    theme(axis.text.x = element_blank())+
+    labs(tag=sprintf("Catchment %i",k))+
+    theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=11)) %>% 
+    return(.)
+}
+
+lapply(c(1,8,11), plotfunc, master_table_10k) -> temp
+
+temp[[1]] <- temp[[1]] + ylab("")
+temp[[3]] <- temp[[3]] + ylab("")
+temp[[1]] <- temp[[1]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+temp[[2]] <- temp[[2]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+temp[[2]] <- temp[[2]] + theme(strip.text.x = element_blank())
+temp[[3]] <- temp[[3]] + theme(strip.text.x = element_blank())
+
+temp %>% 
+ggarrange( plotlist=., ncol=1, nrow=3, common.legend=T, legend="bottom",
+           align='v', heights=c(1,1,1.1)) %>% 
+  ggsave("figures/process_plots_smallset.pdf", plot=.,
+         units="in", height=6,width=7)
+```
+
+## Blended Process Weights
+
+```{r box plots for blended process weights with 10k in calibration small set, fig.width=7.5, fig.height=7.8, units="in"}
+
+plotfunc <- function(k,leg_title="Process\nNumber",replacestrET="evapotranspiration",topsize=8){
+  
+  master_param_table_10k %>% 
+    filter(catchid == k) %>% 
+    filter(modelid == 109) -> mm
+  
+  master_table_10k %>% 
+    filter(catchid == k) %>% 
+    filter(modelid == 109) %>% 
+    select(starts_with("calib")) -> temp_results
+  
+  cbind(mm, "calib_nse"=t(temp_results)) -> mm
+  
+  # filter mm based on being within (>=) 0.05 NSE of top result
+  mm <-  mm %>% 
+    filter(calib_nse >= (max(mm$calib_nse - 0.05)))
+  
+  mm <- plyr::rename(mm, c("evaporation1"=sprintf("%s%i",replacestrET,1),
+                           "evaporation2"=sprintf("%s%i",replacestrET,2)  ))
+  
+  mm %>% 
+    select(starts_with(c("catchid","trial","modelid","modelname","infiltration",
+                         "quickflow",replacestrET,"baseflow","snowbalance","calib") )) %>%
+    pivot_longer(., starts_with(c("infiltration","quickflow",replacestrET,"baseflow","snowbalance") ),
+                 names_to="process",
+                 values_to="process_weight") -> mm
+    
+    mm$process_num <- as.numeric(RavenR::rvn_substrRight(mm$process,1))
+    mm$process_class <- RavenR::rvn_substrMRight(mm$process,1)
+  
+  ggplot(mm, aes(x=process_num, y=process_weight))+
+    geom_boxplot(aes(x=process_num, color=as.factor(process_num), fill=as.factor(process_num)), alpha=0.4, 
+                 outlier.alpha=1)+
+    ylab("Process Weight") + 
+    xlab("Process Number")+
+    theme(axis.title = element_text(face="bold", size=12))+
+    scale_x_continuous(expand=c(0.25,0.25))+
+    facet_wrap(~process_class, scales="free_x",nrow=1,labeller=process_labeller) + 
+    theme(strip.text.x = element_text(size=topsize,face="bold"))+
+    theme(panel.border = element_rect(colour="black",size=0.1, fill=NA))+
+    theme(panel.background = element_rect(fill='white'))+
+    labs(tag=sprintf("Catchment %i",k))+
+    theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=11))+
+    scale_fill_manual(name=leg_title,
+                     values=c(ggplotColours(n=4)[1:3])) +
+    scale_colour_manual(name=leg_title,
+                     values=c(ggplotColours(n=4)[1:3])) +
+    facet_wrap_custom(~process_class, scales = "free_x", ncol=5, labeller=process_labeller, scale_overrides = list(
+    scale_override(1, scale_x_continuous(breaks = c(1,2))),
+    scale_override(2, scale_x_continuous(breaks = c(1,2))),
+    scale_override(3, scale_x_continuous(breaks = c(1,2,3))),
+    scale_override(4, scale_x_continuous(breaks = c(1,2,3))),
+    scale_override(5, scale_x_continuous(breaks = c(1,2,3)))
+    )) %>% 
+    
+    return(.)
+}
+
+lapply(c(1,8,11), plotfunc, leg_title="Process\nNumber") -> temp
+temp[[1]] <- temp[[1]] + ylab("")
+temp[[3]] <- temp[[3]] + ylab("")
+temp[[1]] <- temp[[1]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+temp[[2]] <- temp[[2]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+
+temp[[2]] <- temp[[2]] + theme(strip.text.x = element_blank())
+temp[[3]] <- temp[[3]] + theme(strip.text.x = element_blank())
+
+temp %>% 
+  ggarrange(plotlist=., ncol=1,nrow=3, common.legend = T, legend="right", 
+            heights=c(1,1,1.1)) %>% 
+      ggsave("figures/blended_process_plots_smallset.pdf", plot=.,
+         units="in", height=6,width=7)
+```
+
+## Comparison of Model Performance with Non-Random Seeding
+
+```{r calibration ranked figure boxplot for blended+ comparison, fig.width=7.5, fig.height=7.5, units="in"}
+
+plotfunc <- function(k,mt, lbl=""){
+  mm <- mt %>% 
+    filter(catchid %in% k) %>%
+    filter(modelid %in% c(1,109,110))
+  
+  ## rank
+  mm <- mm[order(-mm$median_cc),]
+  mm$rank <- seq(1,nrow(mm))
+  
+  mm %>%
+    select(., catchid, modelid, modelname, starts_with(c("calib")), rank) %>%
+    pivot_longer(., cols=c(starts_with("calib")),  
+                 values_to="NSE_values", names_to="timeframe") ->
+    mm_longer
+  mm_longer$timeframe <- as.factor(RavenR::rvn_substrMRight(mm_longer$timeframe, 3))
+  
+  ggplot(mm_longer, aes(x=modelname,y=NSE_values) )+ 
+    geom_boxplot(lwd=0.1, aes(fill=modelname, color=modelname,group=modelid), alpha=0.35, outlier.alpha = 1, outlier.size=1, outlier.colour=NULL) +
+    ylim(c(0.15,0.85))+
+    ylab("NSE Scores")+
+    xlab("Calibrated Model Structure")+
+    theme(panel.background = element_blank())+
+      theme(
+      axis.ticks.x=element_blank()
+      ) +
+    scale_x_discrete(labels=c("blended",
+                              expression(paste("blended"["HMETS"])),"HMETS"))+
+    theme(panel.border = element_rect(colour="black",size=1, fill=NA))+
+    scale_fill_manual(name="Calibrated\nModel Structure",
+                       values=c(ggplotColours(n=4)),
+                       labels=c("blended",
+                                expression(paste("blended"["HMETS"])),
+                                "HMETS"))+
+        scale_colour_manual(name="Calibrated\nModel Structure",
+                       values=c(ggplotColours(n=4)),
+                       labels=c("blended",
+                                expression(paste("blended"["HMETS"])),
+                                "HMETS"))+
+    theme(legend.text=element_text(size=13))+
+    theme(legend.title = element_text(size=13))+
+    theme(axis.title.x = element_blank()) %>% 
+  return(.)
+}
+
+lapply(c(1, 8, 11), plotfunc, master_table_10k, rep(" (10k)",3)) -> plotlist_10k
+
+plotlist_10k[[1]] <- plotlist_10k[[1]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+plotlist_10k[[2]] <- plotlist_10k[[2]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+plotlist_10k[[1]] <- plotlist_10k[[1]] + ggtitle("Calibration")+
+  theme(plot.title = element_text(face='bold',size=13,hjust=0.5))
+plotlist_10k[[1]] <- plotlist_10k[[1]] + ylab("")
+plotlist_10k[[3]] <- plotlist_10k[[3]] + ylab("")
+plotlist_10k[[3]] <- plotlist_10k[[3]] + theme(axis.text.x = element_text(size=11))
+plotlist_10k[[1]] <- plotlist_10k[[1]] + theme(axis.text.y = element_text(size=11))
+plotlist_10k[[2]] <- plotlist_10k[[2]] + theme(axis.text.y = element_text(size=11))
+plotlist_10k[[3]] <- plotlist_10k[[3]] + theme(axis.text.y = element_text(size=11))
+plotlist_10k[[2]] <- plotlist_10k[[2]] + theme(axis.title.y = element_text(size=13, face="bold"))
+plotlist_10k -> plotlist_calib_10k
+
+plotfunc <- function(k,mt, lbl=""){
+  mm <- mt %>% 
+    filter(catchid %in% k) %>%
+    filter(modelid %in% c(1,109,110))
+  
+  ## rank
+  mm <- mm[order(-mm$median_cc),]
+  mm$rank <- seq(1,nrow(mm))
+  
+  mm %>%
+    select(., catchid, modelid, modelname, starts_with(c("valid")), rank) %>%
+    pivot_longer(., cols=c(starts_with("valid")), 
+                 values_to="NSE_values", names_to="timeframe") ->
+    mm_longer
+  mm_longer$timeframe <- as.factor(RavenR::rvn_substrMRight(mm_longer$timeframe, 3))
+  
+  ggplot(mm_longer, aes(x=modelname,y=NSE_values) )+ 
+    geom_boxplot(lwd=0.1, aes(fill=modelname, color=modelname, group=modelid), alpha=0.35, outlier.alpha = 1, outlier.size=1, outlier.colour=NULL) +
+    ylim(c(0.15,0.85))+
+    ylab("NSE Scores")+
+    xlab("Calibrated Model Structure")+
+    theme(panel.background = element_blank())+
+      theme(
+      axis.ticks.x=element_blank()
+      ) +
+    scale_x_discrete(labels=c("blended",
+                              expression(paste("blended"["HMETS"])),"HMETS"))+
+    theme(panel.border = element_rect(colour="black",size=1, fill=NA))+
+    scale_fill_manual(name="Calibrated\nModel Structure",
+                       values=c(ggplotColours(n=4)),
+                       labels=c("blended",
+                                expression(paste("blended"["HMETS"])),
+                                "HMETS"))+
+        scale_colour_manual(name="Calibrated\nModel Structure",
+                       values=c(ggplotColours(n=4)),
+                       labels=c("blended",
+                                expression(paste("blended"["HMETS"])),
+                                "HMETS"))+
+    theme(legend.text=element_text(size=13))+
+    theme(legend.title = element_text(size=13))+
+    theme(axis.title.x = element_blank()) %>% 
+  return(.)
+}
+
+lapply(c(1, 8, 11), plotfunc, master_table_10k, rep(" (10k)",3)) -> plotlist_10k
+
+plotlist_10k[[1]] <- plotlist_10k[[1]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+plotlist_10k[[2]] <- plotlist_10k[[2]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+plotlist_10k[[1]] <- plotlist_10k[[1]] + ggtitle("Validation")+
+  theme(plot.title = element_text(face='bold',size=13,hjust=0.5))
+plotlist_10k[[1]] <- plotlist_10k[[1]] + ylab("")
+plotlist_10k[[2]] <- plotlist_10k[[2]] + ylab("")
+plotlist_10k[[3]] <- plotlist_10k[[3]] + ylab("")
+plotlist_10k[[3]] <- plotlist_10k[[3]] + theme(axis.text.x = element_text(size=11))
+plotlist_10k[[1]] <- plotlist_10k[[1]] + theme(axis.title.y = element_blank(), 
+                                               axis.text.y = element_blank())
+plotlist_10k[[2]] <- plotlist_10k[[2]] + theme(axis.title.y = element_blank(), 
+                                               axis.text.y = element_blank())
+plotlist_10k[[3]] <- plotlist_10k[[3]] + theme(axis.title.y = element_blank(), 
+                                               axis.text.y = element_blank())
+plotlist_10k[[1]] <- plotlist_10k[[1]] + labs(tag=sprintf("Catchment %i",1))+
+             theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=12))
+plotlist_10k[[2]] <- plotlist_10k[[2]] + labs(tag=sprintf("Catchment %i",8))+
+             theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=12))
+plotlist_10k[[3]] <- plotlist_10k[[3]] + labs(tag=sprintf("Catchment %i",11))+
+             theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=12))
+
+ggarrange(plotlist=list(plotlist_calib_10k[[1]],plotlist_10k[[1]],
+                     plotlist_calib_10k[[2]], plotlist_10k[[2]],
+                     plotlist_calib_10k[[3]], plotlist_10k[[3]]),
+                    nrow=3, ncol=2, common.legend=T, legend="bottom",
+          heights=c(1.1), widths=c(1.15, 1)) %>% 
+  ggsave("figures/merged_ranked_blendedplus_comparison_10k.pdf", plot=.,
+         units="in", height=10, width=10)
+```
+
+## Supplementary Materials Figures
+
+Observed hydrographs for all catchments.
+
+```{r plot observed hydrographs}
+dd <- seq.Date(from=as.Date("1948-01-01"),by=1,length.out=20454)
+fldr <- "setup_with_results/data_obs"
+
+plotfunc <- function(i) {
+  ffq <- sprintf("%s/%08d_Qobs_daily.rvt",fldr,basins_chars$basin_id[i])
+  qq <- data.frame(date=dd, flow=read.table(ffq,header = F, nrows = 20454, skip = 2,sep=",",colClasses = rep("numeric",1) ))
+  colnames(qq) <- c("date","flow")
+  
+  qq$flow[qq$flow < 0] <- NA
+    
+  qq <- qq[qq$date >= as.Date("1970-01-01"),]
+  qq <- qq[qq$date <= as.Date("1989-12-31"),]
+  
+  qq$period <- NA
+  
+  qq[qq$date < as.Date("1972-01-01"),]$period <- "warm-up"
+  qq[qq$date >= as.Date("1972-01-01") & qq$date <= as.Date("1983-12-31"),]$period <- "calibration"
+  qq[qq$date >= as.Date("1983-01-01") & qq$date <= as.Date("1989-12-31"),]$period <- "validation"
+  
+  ggplot(qq, aes(x=date, y=flow, color=period))+
+    geom_line()+
+    ylab(expression(Flow~(m^{"3"}~s^-1))) + 
+    xlab("Date")+
+    theme(axis.text = element_text(size=8))+
+    theme(axis.title = element_text(size=10))+
+    labs(tag=sprintf("Catchment %i",i))+
+    theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=10))+
+    theme(legend.position = "bottom") +
+    theme(panel.background = element_blank())+
+    theme(panel.border = element_rect(colour="black",size=1, fill=NA))+ 
+    scale_color_manual(name="Period",
+      values=c("grey55",ggplotColours(n=4)[1:2]),
+      breaks=c("warm-up","calibration","validation"),
+      labels=c("Warm-up","Calibration","Validation")) %>% 
+  return(.)
+}
+
+lapply(seq(1,12), plotfunc) -> temp
+
+for (i in 1:10) {
+  temp[[i]] <- temp[[i]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+}
+
+temp %>% 
+ggarrange(plotlist=., ncol=2, nrow=6, common.legend=T, legend="bottom", heights=c(rep(1,5),1.1)) %>% 
+ggsave("figures/catchment_hydrograph_plots.pdf", plot=.,
+         units="in", height=10,width=8.5)
+```
+
+Density plot by process for all catchments.
+
+```{r scatterplot by process full set, fig.width=7.5, fig.height=7.8, units="in"}
+
+plotfunc <- function(k, mt){
+  mm <- mt %>% 
+  filter(catchid == k)
+  
+  master_list <- read.csv("supplementary_data/master_modelstructure_param_list.csv")
+  master_list[num_models,] <- NA
+  mm <- cbind(mm, master_list)
+  
+  mm <- plyr::rename(mm, c("evaporation"="ET"))
+  
+  mm %>% 
+    select(!starts_with(c("max","min","sd","valid","corr") )) %>%
+    filter(modelid <= 109) %>% 
+    pivot_longer(., starts_with("calib"),
+                 names_to="calib_run",
+                 values_to="calib_NSE") %>% 
+    pivot_longer(., c(snowbalance,infiltration,quickflow, ET, baseflow),
+                 names_to="process",
+                 values_to="process_num") ->
+    mm_longer
+
+  ggplot(mm_longer)+
+    ylim(c(0.4,0.9))+
+    ylab("Calibration NSE") + 
+    xlab("Density")+
+    geom_hline(data = subset(mm_longer, modelid == 109), aes(yintercept = calib_NSE, linetype = "blended\ncalibration NSE"), color='lightgrey', lwd=0.25) +
+    scale_linetype_manual(name = "", values=c(1))+
+    geom_density(data=subset(mm_longer, modelid != 109), 
+             aes(y=calib_NSE, fill=as.factor(process_num), color=as.factor(process_num)),
+             alpha=0.2)+
+    theme(legend.position = "right") +    theme(strip.text.x = element_text(size=11,face="bold"))+
+    theme(axis.title = element_text(face="bold", size=10))+
+    theme(axis.text = element_text(size=10))+
+    scale_fill_manual(name="Process No.",
+                      labels=c("1","2","3","blended"),
+                      values=ggplotColours(n=4),
+                      na.value='grey4')+
+    scale_color_manual(name="Process No.",
+                       labels=c("1","2","3","blended"),
+                       values=ggplotColours(n=4),
+                       na.value='grey4')+
+    facet_wrap(~process, nrow=1, scales="free_x", labeller=process_labeller) + 
+    theme(panel.border = element_rect(colour="black",size=0.1, fill=NA))+
+    theme(panel.background = element_rect(fill='white'))+
+    theme(axis.text.x = element_blank())+
+    labs(tag=sprintf("Catchment %i",k))+
+    theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=12)) %>% 
+    return(.)
+}
+
+lapply(seq(1,12), plotfunc, master_table_10k) -> temp
+
+for (i in c(seq(1,6,2), seq(2,7,2), c(9,11,8,10,12))) {
+  temp[[i]] <- temp[[i]] + ylab("")
+}
+for (i in 1:10) {
+  temp[[i]] <- temp[[i]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+}
+for (i in 3:12) {
+  temp[[i]] <- temp[[i]] + theme(strip.text.x = element_blank())
+}
+for (i in seq(2,12,2)) {
+  temp[[i]] <- temp[[i]] + theme(axis.text.y = element_blank())
+}
+
+temp %>% 
+ggarrange( plotlist=., ncol=2, nrow=6, common.legend=T, legend="bottom",
+           align='v', heights=c(1.1,rep(1,4), 1.15)) %>% 
+    ggsave("figures/process_plots_fullset.pdf", plot=.,
+         units="in", height=12,width=12)
+```
+
+
+Blended model process weights for all catchments.
+
+```{r box plots for blended process weights with 10k in calibration, fig.width=7.5, fig.height=7.8, units="in"}
+
+plotfunc <- function(k,leg_title="Process\nNumber",replacestrET="evapotranspiration",topsize=8){
+  
+  master_param_table_10k %>% 
+    filter(catchid == k) %>% 
+    filter(modelid == 109) -> mm
+  
+  master_table_10k %>% 
+    filter(catchid == k) %>% 
+    filter(modelid == 109) %>% 
+    select(starts_with("calib")) -> temp_results
+  
+  cbind(mm, "calib_nse"=t(temp_results)) -> mm
+  
+  # filter mm based on being within (>=) 0.05 NSE of top result
+  mm <-  mm %>% 
+    filter(calib_nse >= (max(mm$calib_nse - 0.05)))
+
+  mm <- plyr::rename(mm, c("evaporation1"=sprintf("%s%i",replacestrET,1),
+                           "evaporation2"=sprintf("%s%i",replacestrET,2)  ))
+  
+  mm %>% 
+    select(starts_with(c("catchid","trial","modelid","modelname","infiltration",
+                         "quickflow",replacestrET,"baseflow","snowbalance","calib") )) %>%
+    pivot_longer(., starts_with(c("infiltration","quickflow",replacestrET,"baseflow","snowbalance") ),
+                 names_to="process",
+                 values_to="process_weight") -> mm
+    
+    mm$process_num <- as.numeric(RavenR::rvn_substrRight(mm$process,1))
+    mm$process_class <- RavenR::rvn_substrMRight(mm$process,1)
+  
+  ggplot(mm, aes(x=process_num, y=process_weight))+
+    geom_boxplot(aes(x=process_num, color=as.factor(process_num), fill=as.factor(process_num)), alpha=0.4, 
+                 outlier.alpha=1)+
+    ylab("Process Weight") + 
+    xlab("Process Number")+
+    theme(axis.title = element_text(face="bold", size=12))+
+    scale_x_continuous(expand=c(0.25,0.25))+
+    facet_wrap(~process_class, scales="free_x",nrow=1,labeller=process_labeller) + 
+    theme(strip.text.x = element_text(size=topsize,face="bold"))+
+    theme(panel.border = element_rect(colour="black",size=0.1, fill=NA))+
+    theme(panel.background = element_rect(fill='white'))+
+    labs(tag=sprintf("Catchment %i",k))+
+    theme(plot.tag.position = "right", plot.tag = element_text(angle=90, face="bold",size=11))+
+    scale_fill_manual(name=leg_title,
+                     values=c(ggplotColours(n=4)[1:3])) +
+    scale_colour_manual(name=leg_title,
+                     values=c(ggplotColours(n=4)[1:3])) +
+  facet_wrap_custom(~process_class, scales = "free_x", ncol=5, labeller=process_labeller, scale_overrides = list(
+    scale_override(1, scale_x_continuous(breaks = c(1,2))),
+    scale_override(2, scale_x_continuous(breaks = c(1,2))),
+    scale_override(3, scale_x_continuous(breaks = c(1,2,3))),
+    scale_override(4, scale_x_continuous(breaks = c(1,2,3))),
+    scale_override(5, scale_x_continuous(breaks = c(1,2,3)))
+    )) %>% 
+    
+    return(.)
+}
+
+lapply(seq(1,12), plotfunc, leg_title="Process Number", replacestrET="ET",topsize=11) -> temp
+
+temp[[1]] <- temp[[1]] + theme(strip.text.x = element_text(size=10,face="bold"))
+temp[[2]] <- temp[[2]] + theme(strip.text.x = element_text(size=10,face="bold"))
+
+for (i in c(seq(1,6,2), seq(2,7,2), c(9,11,8,10,12))) {
+  temp[[i]] <- temp[[i]] + ylab("")
+}
+for (i in 1:10) {
+  temp[[i]] <- temp[[i]] + theme(axis.title.x = element_blank(), axis.text.x = element_blank())
+}
+for (i in 3:12) {
+  temp[[i]] <- temp[[i]] + theme(strip.text.x = element_blank())
+}
+for (i in seq(2,12,2)) {
+  temp[[i]] <- temp[[i]] + theme(axis.text.y = element_blank())
+}
+
+temp %>% 
+ggarrange( plotlist=., ncol=2, nrow=6, common.legend=T, legend="bottom",
+           align='v', heights=c(1.1,rep(1,4), 1.15))  %>% 
+    ggsave("figures/blended_process_plots_fullset.pdf", plot=.,
+         units="in", height=12,width=12)
+```
+
+```{r empty chunk to run all previous chunks}
+
+```
+
