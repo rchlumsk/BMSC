@@ -16,7 +16,7 @@ They key points from this study are:
 We provide the setup files required to run the experiment (see [here](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results)).
 
 ## Results
-The experiment results are provided with respect to model performance metrics and parameter values. These are found in the [setup_with_results](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results) folder.
+The experimental results are provided with respect to model performance metrics and parameter values. These are found in the [setup_with_results](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results) folder.
 
 ## Creating Plots
 This GitHub contains all scripts and data to reproduce the plots in the paper and Supplementary Material. Please see the main plotting script [processing_and_figures.Rmd](https://github.com/rchlumsk/BMSC/blob/main/processing_and_figures.Rmd) and follow the chunks in the file. The produced figures are also available in the [figures](https://github.com/rchlumsk/BMSC/tree/main/figures) folder. All the data used to produce those figures can be found in the results folders (see above). 
