@@ -1,4 +1,5 @@
 [![license](https://img.shields.io/badge/license-GPL3-lightgrey.svg)](https://choosealicense.com/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4635309.svg)](https://doi.org/10.5281/zenodo.4635309)
 
 # Simultaneous calibration of hydrologic model structure and parameters using a blended model
 *by Robert Chlumsky, Juliane Mai, James R Craig, and Bryan A Tolson (University of Waterloo, Canada)*
@@ -27,3 +28,8 @@ This GitHub contains all scripts and data to reproduce the plots in the paper an
 Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (submitted paper).<br>
 Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
 
+### Code Publication
+Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (2021).<br>
+Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
+*Zenodo*<br>
+https://doi.org/10.5281/zenodo.4635309
