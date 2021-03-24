@@ -1,5 +1,4 @@
 [![license](https://img.shields.io/badge/license-GPL3-lightgrey.svg)](https://choosealicense.com/)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3468442.svg)](https://doi.org/10.5281/zenodo.3468442)
 
 # Simultaneous calibration of hydrologic model structure and parameters using a blended model
 *by Robert Chlumsky, Juliane Mai, James R Craig, and Bryan A Tolson (University of Waterloo, Canada)*
@@ -14,23 +13,17 @@ They key points from this study are:
 3. This method may also be useful in identifying dominant processes and model structures in catchments
 
 ## Examples
-We provide the setup files required to run the experiment (see [here](https://github.com/rchlumsk/BMSC/setup_with_results)).
+We provide the setup files required to run the experiment (see [here](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results)).
 
 ## Results
-The experiment results are provided with respect to model performance metrics and parameter values. These are found in the [setup_with_results](https://github.com/rchlumsk/BMSC/setup_with_results) folder.
+The experiment results are provided with respect to model performance metrics and parameter values. These are found in the [setup_with_results](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results) folder.
 
 ## Creating Plots
-This GitHub contains all scripts and data to reproduce the plots in the paper and Supplementary Material. Please see the main plotting script [processing_and_figures.Rmd](https://github.com/rchlumsk/BMSC) and follow the chunks in the file. The produced figures are also available in the [figures](https://github.com/rchlumsk/BMSC/figures) folder. All the data used to produce those figures can be found in the results folders (see above). 
+This GitHub contains all scripts and data to reproduce the plots in the paper and Supplementary Material. Please see the main plotting script [processing_and_figures.Rmd](https://github.com/rchlumsk/BMSC/blob/main/processing_and_figures.Rmd) and follow the chunks in the file. The produced figures are also available in the [figures](https://github.com/rchlumsk/BMSC/tree/main/figures) folder. All the data used to produce those figures can be found in the results folders (see above). 
 
 ## Citation
 
 ### Journal Publication
 Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (submitted paper).<br>
 Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
-
-### Code Publication
-Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (2021).<br>
-Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
-*Zenodo*<br>
-https://doi.org/10.5281/zenodo.xxxxx
 
