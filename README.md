@@ -14,7 +14,7 @@ They key points from this study are:
 3. This method may also be useful in identifying dominant processes and model structures in catchments
 
 ## Examples
-We provide the setup files required to run the experiment (see [here](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results)).
+We provide the setup files required to run the experiment (see [here](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results)). The files are derived from those used in the introductory paper for the blended model in Mai et. al. 2020 (see citation below), which can be found at https://github.com/julemai/xSSA. The PieShare calculation scripts are derived from those found at https://github.com/julemai/PieShareDistribution.
 
 ## Results
 The experimental results are provided with respect to model performance metrics and parameter values. These are found in the [setup_with_results](https://github.com/rchlumsk/BMSC/tree/main/setup_with_results) folder.
@@ -25,11 +25,20 @@ This GitHub contains all scripts and data to reproduce the plots in the paper an
 ## Citation
 
 ### Journal Publication
-Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (submitted paper).<br>
-Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
+Chlumsky, R., Mai, J., Craig, J. R., & Tolson, B. A. (2021).<br>
+Simultaneous calibration of hydrologic model structure and parameters using a blended model.<br>
+*Water Resources Research*, 57, e2020WR029229.<br>
+https://doi.org/10.1029/2020WR029229 <br>
 
 ### Code Publication
 Chlumsky, R., Mai, J., Craig, J. R., and Tolson, B. A. (2021).<br>
 Simultaneous calibration of hydrologic model structure and parameters using a blended model. <br>
 *Zenodo*<br>
 https://doi.org/10.5281/zenodo.4635309
+
+### Mai et. al (2020) Publication
+
+Mai, J., Craig, J. R., and Tolson, B. A. (2020).<br>
+Simultaneously determining global sensitivities of model parameters and model structure. <br>
+*Hydrol. Earth Syst. Sci.*, 24, 5835–5858.<br>
+https://doi.org/10.5194/hess-24-5835-2020
