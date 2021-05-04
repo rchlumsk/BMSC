@@ -1,5 +1,7 @@
 
 # determines the weights (N+1) from a vector of N random values
+## note: this script is derived from the original materials located here:
+## https://github.com/julemai/PieShareDistribution
 
 calc_pieshare <- function(rr) {
   ## rr is a vector of N-1 weights
